@@ -2,6 +2,7 @@ library(dplyr)
 library(evd)
 library(tidyverse)
 library(multcomp)
+library(gridExtra)
 library("lmtest")
 library("sandwich")
 library('extraDistr')
@@ -654,7 +655,7 @@ dfplotbut <- data.frame(beta=as.numeric(unlist(silmetlist[[9]][1])), rsq=rsq, rs
 
 mean(dfplotbut$beta)
 
-# nspecies = 46, p=2, k=1, R^2~F(1, 44)
+# nspecies = 148, p=2, k=1, R^2~F(1, 146)
 rsq=as.numeric(unlist(silmetlist[[9]][3]))
 dfplotbut <- data.frame(beta=as.numeric(unlist(silmetlist[[9]][1])), rsq=rsq, rsqt=rsq/(1-rsq)*146)
 
@@ -664,37 +665,68 @@ sort(dfplotbut$rsqt)[cumsum(sort(dfplotbut$rsqt)) > sum(dfplotbut$rsqt)*0.05]
 
 #hist(dfplotbut$rsqt, freq=FALSE, xlim = c(0,150), breaks=50)
 #curve(df(x, df1 = 1, df2 = 44), from = 0, to = 150, n = 1000, col= 'black', lwd=2, add = T)
-#rm(df) for stat_function
-
 cumsum(table(cut(dfplotbut$rsqt, breaks = seq.int(from = 0, to = 100, by = 1))))
 
 quant <- qf(0.95, df1 = 1, df2 = 146, lower.tail = TRUE)
 empquant <- quantile(dfplotbut$rsqt, probs=c(0.95))
 
-fig7 <- ggplot(dfplotbut, aes(beta)) + geom_histogram(aes(y=after_stat(density)), binwidth=.0015, color="black", fill="lightblue") +
-  #xlab(TeX("\\hat{\\beta}")) +
+#Regression coefficient in vivo butyrate
+regrsilbut <- c()
+regrcvivbut <- c()
+logvi <- log(df[, 9])
+logvi[which(is.infinite(logvi))]=NA
+origflx <- paste("EX_", colnames(df)[9], sep="")
+
+regrecoefs <- c()
+confind <- c()
+
+flx <- df[, origflx]
+
+lmS <- lapply(abun, function(x) coeftest(lm(flx  ~ scale(df[, x]) + df$Age + df$BMI + df$Stratification + df$Gender), vcov = vcovHC(lm(flx ~ scale(df[, x]) + df$Age + df$BMI + df$Stratification + df$Gender), type="HC1"))) 
+lmV <- lapply(abun, function(x) coeftest(lm(logvi ~ scale(df[, x]) + df$Age + df$BMI + df$Stratification + df$Gender), vcov = vcovHC(lm(logvi ~ scale(df[, x]) + df$Age + df$BMI + df$Stratification + df$Gender), type="HC1")))
+
+for(j in 1:length(abun)){
+  regrcvivbut <- c(regrcvivbut, lmV[[j]][2,1])
+  regrsilbut <- c(regrsilbut, lmS[[j]][2,1])
+}
+
+lma <- lm(regrcvivbut~regrsilbut)
+summary(lma)
+k=length(lma$coefficients)-1
+SSE=sum(lma$residuals**2)
+n=length(lma$residuals)
+RSE <- sqrt(SSE/(n-(1+k)))
+sd_hat <- RSE/sqrt(sum((regrsilbut - mean(regrsilbut))^2))
+
+#rm(df) for stat_function
+plot1 <- ggplot(dfplotbut, aes(beta)) +
+  geom_histogram(aes(y=after_stat(density)), binwidth=.0015, color="black", fill="lightblue") +
   theme_bw() +
-  stat_function(fun = dnorm, args = list(mean = 0, sd = 1/346), size=1) +
-  theme(axis.text=element_text(colour="black") , text=element_text(size=15)) +
-  
-  ggplot(dfplotbut, aes(x=rsqt)) + geom_histogram(aes(y=..density..), boundary=0, binwidth = 2.5, closed="left", color="black", fill="lightblue") +
+  stat_function(fun = dnorm, args = list(mean = 0, sd = sd_hat), size=1) +
+  theme(axis.text=element_text(colour="black"), text=element_text(size=15))
+
+# Create the second plot
+plot2 <- ggplot(dfplotbut, aes(x=rsqt)) +
+  geom_histogram(aes(y=..density..), boundary=0, binwidth = 2.5, closed="left", color="black", fill="lightblue") +
   theme_bw() +
   theme(axis.text=element_text(colour="black"), text=element_text(size=15)) +
-  xlab("transformed r-squared")+
+  xlab("transformed r-squared") +
   xlim(c(0,75)) +
   ylim(c(0,.21)) +
-  
   stat_function(fun = df,
                 geom = "line",
                 size = 1,
                 args = list(
                   df1 = 1,
-                  df2 = 144
-                ))+
+                  df2 = 146
+                )) +
   geom_vline(xintercept = quant, size=1, color='orange') +
-  geom_vline(xintercept = empquant, size=1, color='red') 
+  geom_vline(xintercept = empquant, size=1, color='red')
 
-ggsave(fig7, filename = '~/Figures_S1.tiff', width = 21, height = 6, scale=0.8, dpi = "retina")
+
+fig7 <- grid.arrange(plot1, plot2, ncol = 2)
+
+ggsave(fig7, filename = '~/Figure_S1.tiff', width = 21, height = 6, scale=0.8, dpi = 300)
 
 df$R <- rowSums(df[110:257]>0)
 
